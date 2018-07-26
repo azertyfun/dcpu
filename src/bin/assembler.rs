@@ -53,7 +53,7 @@ struct Args {
 
 #[cfg(feature = "bins")]
 quick_main!(|| -> assembler::Result<()> {
-    simplelog::TermLogger::init(simplelog::LogLevelFilter::Info,
+    simplelog::TermLogger::init(simplelog::LevelFilter::Info,
                                 Default::default())
                           .chain_err(|| "log init failure")?;
 

@@ -64,7 +64,7 @@ impl Directive {
                         "`.org` can't be used to go backward: current = {}, n = {}",
                         bin.len() - 1,
                         n);
-                bin.resize((n as usize), val);
+                bin.resize(n as usize, val);
                 Ok(n)
             }
             Directive::Skip(n, val) => {

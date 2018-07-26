@@ -1,7 +1,7 @@
 use std::thread;
 use std::sync::{mpsc, Arc, Mutex};
 
-use glium::{self, DisplayBuild, Surface};
+use glium::{self, Surface};
 
 use emulator::device::{self, keyboard, lem1802};
 use emulator::device::keyboard::mpsc_backend::*;
@@ -56,7 +56,6 @@ pub fn start() -> (ScreenBackend, KeyboardBackend) {
 
 error_chain! {
     foreign_links {
-        CreationError(glium::GliumCreationError<glium::glutin::CreationError>);
         VertexCreationError(glium::vertex::BufferCreationError);
         ProgramCreationError(glium::ProgramCreationError);
         SwapBuffersError(glium::SwapBuffersError);
@@ -69,11 +68,12 @@ fn thread_main(thread_command: mpsc::Receiver<ThreadCommand>,
                keyboard_sender: mpsc::Sender<KeyboardEvent>,
                screen_receiver: mpsc::Receiver<ScreenCommand>)
     -> Result<()> {
-    let display = try!(glium::glutin::WindowBuilder::new()
-        .with_title("Screen + keyboard")
-        .with_vsync()
-        .with_visibility(false)
-        .build_glium());
+    let mut events_loop = glium::glutin::EventsLoop::new();
+    let window = glium::glutin::WindowBuilder::new();
+    let context = glium::glutin::ContextBuilder::new().with_vsync(true);
+    let display = glium::Display::new(window, context, &events_loop).unwrap();
+    display.gl_window().hide();
+    display.gl_window().set_title("Screen + keyboard");
     let mut current_screen =
         Box::new(lem1802::Screen([lem1802::Color::default(); 12288]));
 
@@ -149,15 +149,16 @@ fn thread_main(thread_command: mpsc::Receiver<ThreadCommand>,
     ",
     None));
 
-    'main: loop {
+    let mut running = true;
+    'main: while running {
         'pote2: loop {
             match screen_receiver.try_recv() {
                 Ok(ScreenCommand::Show(screen)) => {
                     current_screen = screen.into();
-                    display.get_window().map(|w| w.show());
+                    display.gl_window().show();
                 }
                 Ok(ScreenCommand::Hide) => {
-                    display.get_window().map(|w| w.hide());
+                    display.gl_window().hide();
                 }
                 Err(mpsc::TryRecvError::Empty) => break 'pote2,
                 Err(mpsc::TryRecvError::Disconnected) => break 'main,
@@ -186,22 +187,25 @@ fn thread_main(thread_command: mpsc::Receiver<ThreadCommand>,
                          &Default::default()));
         try!(target.finish());
 
-        for ev in display.poll_events() {
+        events_loop.poll_events(|ev| {
             match ev {
-                glium::glutin::Event::Closed => break 'main,
-                glium::glutin::Event::KeyboardInput(state, raw, code) => {
-                    if let Some(converted) = convert_kb_code(raw, code) {
-                        try!(keyboard_sender.send(match state {
-                            glium::glutin::ElementState::Pressed =>
-                                KeyboardEvent::KeyPressed(converted),
-                            glium::glutin::ElementState::Released =>
-                                KeyboardEvent::KeyReleased(converted)
-                        }));
-                    }
+                glium::glutin::Event::WindowEvent { event, .. } => match event {
+                    glium::glutin::WindowEvent::CloseRequested => running = false,
+                    glium::glutin::WindowEvent::KeyboardInput { input, .. } => {
+                        if let Some(converted) = convert_kb_code(input.scancode, input.virtual_keycode) {
+                            keyboard_sender.send(match input.state {
+                                glium::glutin::ElementState::Pressed =>
+                                    KeyboardEvent::KeyPressed(converted),
+                                glium::glutin::ElementState::Released =>
+                                    KeyboardEvent::KeyReleased(converted)
+                            }).expect("Could not send keyboard input");
+                        }
+                    },
+                    _ => ()
                 }
                 _ => ()
             }
-        }
+        });
 
         'pote: loop {
             match thread_command.try_recv() {
@@ -213,11 +217,11 @@ fn thread_main(thread_command: mpsc::Receiver<ThreadCommand>,
     }
 
     // For some reason, the window is not closed with the end of the thread
-    display.get_window().map(|w| w.hide());
+    display.gl_window().hide();
     Ok(())
 }
 
-fn convert_kb_code(raw: u8, maybe_code: Option<glium::glutin::VirtualKeyCode>)
+fn convert_kb_code(raw: u32, maybe_code: Option<glium::glutin::VirtualKeyCode>)
     -> Option<keyboard::Key> {
     use glium::glutin::VirtualKeyCode;
     use emulator::device::keyboard::Key;
